@@ -333,6 +333,31 @@
   <script src="cc.js"></script>
   <!-- 新增：引入Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- 開發環境：過濾控制台噪音 -->
+  <script>
+    // 過濾 Chrome 擴展的錯誤消息（僅在開發環境）
+    if (
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1" ||
+      window.location.protocol === "file:"
+    ) {
+      const originalError = console.error;
+      console.error = function (...args) {
+        const message = args.join(" ");
+        // 忽略 Chrome 擴展的錯誤
+        if (
+          message.includes("chrome-extension://") ||
+          message.includes("Attempting to use a disconnected port object") ||
+          message.includes("ERR_FILE_NOT_FOUND") ||
+          message.includes("Failed to load resource")
+        ) {
+          return; // 不顯示這些錯誤
+        }
+        originalError.apply(console, args);
+      };
+    }
+  </script>
   <script>
     // 初始化資料
     let items = [
@@ -532,6 +557,36 @@
         .join("");
     }
 
+    // HTML 轉義函數（防止 XSS 攻擊）
+    function escapeHtml(unsafe) {
+      if (!unsafe) return "";
+      return unsafe
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    // URL 安全驗證函數
+    function sanitizeUrl(url) {
+      if (!url) return "";
+
+      // 移除潛在的 javascript: 協議
+      if (url.toLowerCase().startsWith("javascript:")) {
+        console.warn("⚠️ 阻止不安全的 URL:", url);
+        return "";
+      }
+
+      // 確保是 https 或相對路徑
+      if (url.startsWith("http://") && !url.startsWith("https://")) {
+        console.warn("⚠️ 將 HTTP URL 轉換為 HTTPS:", url);
+        url = url.replace("http://", "https://");
+      }
+
+      return url;
+    }
+
     // 初始化分類選項（地區）
     function populateCategories() {
       const categorySelect = document.querySelector("ion-select");
@@ -554,17 +609,36 @@
 
       modalTitle.textContent = title;
 
-      // 處理YouTube鏈接，轉換為嵌入格式
-      let embedUrl = videoUrl;
+      // 安全驗證和處理YouTube鏈接
+      let embedUrl = sanitizeUrl(videoUrl);
+
       if (videoUrl.includes("youtube.com/watch?v=")) {
         const videoId = videoUrl.split("v=")[1].split("&")[0];
-        embedUrl = `https://www.youtube.com/embed/${videoId}`;
+        // 只允許字母、數字、連字符和底線
+        if (/^[a-zA-Z0-9_-]+$/.test(videoId)) {
+          embedUrl = `https://www.youtube.com/embed/${videoId}`;
+        } else {
+          console.warn("⚠️ 非法的 YouTube 影片 ID:", videoId);
+          return;
+        }
       } else if (videoUrl.includes("youtu.be/")) {
         const videoId = videoUrl.split("youtu.be/")[1].split("?")[0];
-        embedUrl = `https://www.youtube.com/embed/${videoId}`;
+        // 只允許字母、數字、連字符和底線
+        if (/^[a-zA-Z0-9_-]+$/.test(videoId)) {
+          embedUrl = `https://www.youtube.com/embed/${videoId}`;
+        } else {
+          console.warn("⚠️ 非法的 YouTube 影片 ID:", videoId);
+          return;
+        }
       }
 
-      videoContainer.innerHTML = `<iframe src="${embedUrl}" allowfullscreen></iframe>`;
+      // 使用 DOM API 而非 innerHTML
+      const iframe = document.createElement("iframe");
+      iframe.src = embedUrl;
+      iframe.setAttribute("allowfullscreen", "");
+      iframe.setAttribute("frameborder", "0");
+      videoContainer.innerHTML = ""; // 清空
+      videoContainer.appendChild(iframe);
       modal.classList.add("active");
       document.body.style.overflow = "hidden"; // 防止背景滾動
     }
@@ -632,29 +706,38 @@
       filteredItems.forEach((item) => {
         const listItem = document.createElement("ion-item");
         listItem.className = "list-item";
+
+        // 安全轉義所有文字內容（防止 XSS）
+        const itemName = escapeHtml(item.name);
+        const itemArea = escapeHtml(item.area);
+        const itemImage = sanitizeUrl(item.image);
+        const itemOpenTime = escapeHtml(item.openTime);
+        const itemFeature = escapeHtml(item.feature);
+        const itemVideo = sanitizeUrl(item.video);
+
         listItem.innerHTML = `
       <div class="item-content">
         <!-- 景點圖片 -->
         <div class="image-container">
-          <img src="${item.image}" alt="${item.name}" class="item-image"
+          <img src="${itemImage}" alt="${itemName}" class="item-image"
                onload="this.parentElement.classList.remove('error')"
                onerror="this.parentElement.classList.add('error')">
           <div class="image-fallback-text">圖片載入失敗</div>
         </div>
         <!-- 景點名稱 -->
-        <div class="item-title">${item.name}</div>
+        <div class="item-title">${itemName}</div>
         <!-- 地區 -->
-        <div class="item-subtitle">地區：${item.area}</div>
+        <div class="item-subtitle">地區：${itemArea}</div>
         <!-- 開放時間和特色 -->
         <div class="item-details">
-          <p>開放時間：${item.openTime}</p>
-          <p>特色：${item.feature}</p>
+          <p>開放時間：${itemOpenTime}</p>
+          <p>特色：${itemFeature}</p>
         </div>
         <!-- 標籤（地區）和影片按鈕 -->
           <div class="tag-container">
-            <ion-chip size="small" onclick="filterByArea('${item.area}')">${item.area}</ion-chip>
+            <ion-chip size="small" onclick="filterByArea('${itemArea}')">${itemArea}</ion-chip>
             <!-- 將 <a> 標籤替換為以下 ion-chip -->
-            <ion-chip size="small" color="primary" onclick="openVideoModal('${item.video}', '${item.name} 導覽影片')">
+            <ion-chip size="small" color="primary" onclick="openVideoModal('${itemVideo}', '${itemName} 導覽影片')">
               <ion-icon name="play" slot="start"></ion-icon>
               導覽影片
             </ion-chip>
@@ -667,7 +750,9 @@
       // 如果沒有結果顯示提示
       if (filteredItems.length === 0) {
         const emptyItem = document.createElement("ion-item");
-        emptyItem.innerHTML = `<div class="item-content" style="text-align:center; padding:1rem;">沒有找到符合條件的景點</div>`;
+        emptyItem.innerHTML = `<div class="item-content" style="text-align:center; padding:1rem;">${escapeHtml(
+          "沒有找到符合條件的景點"
+        )}</div>`;
         list.appendChild(emptyItem);
       }
     }
